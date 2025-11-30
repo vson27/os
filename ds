@@ -1,0 +1,163 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+
+double calcAvgRotationalDelay(int rpm) {
+    return (60.0 / rpm) * 1000.0 / 2.0;
+}
+
+
+double fcfs(const vector<int>& requests, int head, double perCylinderSeek) {
+    double totalSeek = 0;
+    int current = head;
+    for (int req : requests) {
+        totalSeek += fabs(current - req) * perCylinderSeek;
+        current = req;
+    }
+    return totalSeek;
+}
+
+
+double sstf(vector<int> requests, int head, double perCylinderSeek) {
+    double totalSeek = 0;
+    int current = head;
+    vector<bool> visited(requests.size(), false);
+
+
+    for (int i = 0; i < (int)requests.size(); i++) {
+        int closestIndex = -1;
+        int minDist = INT_MAX;
+        for (int j = 0; j < (int)requests.size(); j++) {
+            if (!visited[j]) {
+                int dist = abs(current - requests[j]);
+                if (dist < minDist) {
+                    minDist = dist;
+                    closestIndex = j;
+                }
+            }
+        }
+        visited[closestIndex] = true;
+        totalSeek += minDist * perCylinderSeek;
+        current = requests[closestIndex];
+    }
+    return totalSeek;
+}
+
+
+double look(vector<int> requests, int head, double perCylinderSeek) {
+    double totalSeek = 0;
+    sort(requests.begin(), requests.end());
+
+
+    vector<int> left, right;
+    for (int req : requests) {
+        if (req < head) left.push_back(req);
+        else right.push_back(req);
+    }
+
+
+    int current = head;
+
+
+    for (int req : right) {
+        totalSeek += fabs(current - req) * perCylinderSeek;
+        current = req;
+    }
+
+
+    for (int i = (int)left.size() - 1; i >= 0; i--) {
+        totalSeek += fabs(current - left[i]) * perCylinderSeek;
+        current = left[i];
+    }
+
+
+    return totalSeek;
+}
+
+
+double cscan(vector<int> requests, int head, double perCylinderSeek, int totalCylinders) {
+    double totalSeek = 0;
+    sort(requests.begin(), requests.end());
+
+
+    vector<int> left, right;
+    for (int req : requests) {
+        if (req < head) left.push_back(req);
+        else right.push_back(req);
+    }
+
+
+    int current = head;
+
+
+    for (int req : right) {
+        totalSeek += fabs(current - req) * perCylinderSeek;
+        current = req;
+    }
+
+
+    if (!left.empty()) {
+        
+        totalSeek += fabs(current - 0) * perCylinderSeek;
+        current = 0;
+        for (int req : left) {
+            totalSeek += fabs(current - req) * perCylinderSeek;
+            current = req;
+        }
+    }
+
+
+    return totalSeek;
+}
+
+
+int main() {
+    ifstream fin("disk.dat");
+    if (!fin) {
+        cerr << "couldnt open disk.dat" << endl;
+        return 1;
+    }
+
+
+    int cylinders, sectors, bytesPerSector, rpm, initialHead;
+    double avgSeekTime;
+    fin >> cylinders >> sectors >> bytesPerSector >> rpm >> avgSeekTime >> initialHead;
+
+
+    vector<int> requests;
+    int x;
+    while (fin >> x) requests.push_back(x);
+    fin.close();
+
+
+    if (requests.empty()) {
+        cerr << "Error: No requests found in disk.dat" << endl;
+        return 1;
+    }
+
+
+    double avgRotationalDelay = calcAvgRotationalDelay(rpm);
+
+    double perCylinderSeek = avgSeekTime / (double)cylinders;
+
+    double fcfsSeek = fcfs(requests, initialHead, perCylinderSeek);
+    double sstfSeek = sstf(requests, initialHead, perCylinderSeek);
+    double lookSeek = look(requests, initialHead, perCylinderSeek);
+    double cscanSeek = cscan(requests, initialHead, perCylinderSeek, cylinders);
+
+
+    cout << fixed << setprecision(4);
+    cout << "Average Rotational Delay (ms): " << avgRotationalDelay << endl;
+    cout << "Total Seek Time (ms):\n";
+    cout << "FCFS   : " << fcfsSeek << " ms\n";
+    cout << "SSTF   : " << sstfSeek << " ms\n";
+    cout << "LOOK   : " << lookSeek << " ms\n";
+    cout << "C-SCAN : " << cscanSeek << " ms\n";
+
+
+    return 0;
+}
+
+
+
+
