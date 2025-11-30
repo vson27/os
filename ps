@@ -1,0 +1,370 @@
+#include <iostream>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <queue>
+#include <map>
+#include <iomanip>
+#include <algorithm>
+
+using namespace std;
+
+struct Burst {
+    int duration;
+    bool isCPU;
+    Burst(int d, bool cpu) : duration(d), isCPU(cpu) {}
+};
+
+struct Process {
+    int pid, priority, arrival;
+    vector<Burst> bursts;
+    int burstIndex = 0;
+    int remaining = 0;
+    int ioRemaining = 0;
+    int completedAt = -1;
+    bool isDone = false;
+    bool inIO = false;
+    bool inCPU = false;
+    vector<char> timeline;
+
+    Process(int pid_, int pri, int arr) : pid(pid_), priority(pri), arrival(arr) {}
+
+    bool hasMoreBursts() const {
+        return burstIndex < bursts.size();
+    }
+
+    void nextBurst() {
+        if (hasMoreBursts()) {
+            remaining = bursts[burstIndex].duration;
+            inCPU = bursts[burstIndex].isCPU;
+            inIO = !inCPU;
+        }
+    }
+
+    void proceedBurst() {
+        if (remaining > 0) remaining--;
+    }
+
+    bool burstDone() {
+        return remaining == 0 && hasMoreBursts();
+    }
+
+    void advanceBurst() {
+        burstIndex++;
+        if (hasMoreBursts())
+            nextBurst();
+        else
+            isDone = true;
+    }
+
+    char currentStatusChar() const {
+        if (isDone) return ' ';
+        if (inCPU) return 'C';
+        if (inIO) return 'R';
+        return 'W';  // Default waiting
+    }
+};
+
+vector<Process> readProcessFile(string filename, int &quantum) {
+    ifstream file(filename);
+    vector<Process> processes;
+    string line;
+    int n;
+
+    if (!getline(file, line)) {
+        cerr << "Invalid file\n";
+        exit(1);
+    }
+
+    n = stoi(line);
+
+    for (int i = 0; i < n; ++i) {
+        getline(file, line);
+        stringstream ss(line);
+        string token;
+        vector<int> values;
+        while (getline(ss, token, ',')) {
+            int val = stoi(token);
+            values.push_back(val);
+        }
+
+        int pid = values[0];
+        int pri = values[1];
+        int arr = values[2];
+        Process p(pid, pri, arr);
+        bool isCPU = true;
+        for (size_t j = 3; j < values.size(); ++j) {
+            if (values[j] == -1) break;
+            p.bursts.emplace_back(values[j], isCPU);
+            isCPU = !isCPU;
+        }
+        p.nextBurst();
+        processes.push_back(p);
+    }
+
+    if (getline(file, line)) {
+        quantum = stoi(line);
+    } else {
+        quantum = 1;
+    }
+
+    return processes;
+}
+
+bool allDone(const vector<Process>& processes) {
+    for (auto& p : processes) {
+        if (!p.isDone) return false;
+    }
+    return true;
+}
+
+void printTimeline(const vector<Process>& processes) {
+    for (const auto& p : processes) {
+        cout << "P" << p.pid << ": ";
+        for (char c : p.timeline) {
+            cout << c;
+        }
+        cout << endl;
+    }
+    cout << endl;
+}
+
+// FCFS
+void simulateFCFS(vector<Process> processes) {
+    cout << "=== FCFS Scheduling ===\n";
+    int time = 0;
+    queue<int> readyQueue;
+    int running = -1;
+
+    while (!allDone(processes)) {
+        // Handle IO completion
+        for (auto& p : processes) {
+            if (p.inIO) {
+                p.proceedBurst();
+                p.timeline.push_back('R');
+                if (p.burstDone()) {
+                    p.inIO = false;
+                    p.advanceBurst();
+                    if (!p.isDone)
+                        readyQueue.push(p.pid);
+                }
+            }
+        }
+
+        // New arrivals
+        for (auto& p : processes) {
+            if (p.arrival == time) {
+                readyQueue.push(p.pid);
+            }
+        }
+
+        // If no CPU process, schedule next
+        if (running == -1 && !readyQueue.empty()) {
+            running = readyQueue.front();
+            readyQueue.pop();
+        }
+
+        // Run CPU
+        for (auto& p : processes) {
+            if (p.pid == running && !p.inIO && !p.isDone) {
+                p.proceedBurst();
+                p.timeline.push_back('C');
+                if (p.burstDone()) {
+                    p.inCPU = false;
+                    p.advanceBurst();
+                    running = -1;
+                }
+            } else if (!p.inIO && !p.isDone && p.pid != running) {
+                p.timeline.push_back('W');
+            }
+        }
+
+        ++time;
+    }
+
+    printTimeline(processes);
+}
+
+// Round Robin
+void simulateRR(vector<Process> processes, int quantum) {
+    cout << "=== Round Robin Scheduling (Quantum = " << quantum << ") ===\n";
+    int time = 0;
+    queue<int> readyQueue;
+    map<int, int> quantumRemaining;
+    int running = -1;
+
+    while (!allDone(processes)) {
+        // Handle IO
+        for (auto& p : processes) {
+            if (p.inIO) {
+                p.proceedBurst();
+                p.timeline.push_back('R');
+                if (p.burstDone()) {
+                    p.inIO = false;
+                    p.advanceBurst();
+                    if (!p.isDone)
+                        readyQueue.push(p.pid);
+                }
+            }
+        }
+
+        // Arrival
+        for (auto& p : processes) {
+            if (p.arrival == time) {
+                readyQueue.push(p.pid);
+            }
+        }
+
+        if (running == -1 && !readyQueue.empty()) {
+            running = readyQueue.front();
+            readyQueue.pop();
+            quantumRemaining[running] = quantum;
+        }
+
+        for (auto& p : processes) {
+            if (p.pid == running && !p.inIO && !p.isDone) {
+                p.proceedBurst();
+                p.timeline.push_back('C');
+                quantumRemaining[p.pid]--;
+                if (p.burstDone()) {
+                    p.inCPU = false;
+                    p.advanceBurst();
+                    running = -1;
+                } else if (quantumRemaining[p.pid] == 0) {
+                    readyQueue.push(p.pid);
+                    running = -1;
+                }
+            } else if (!p.inIO && !p.isDone && p.pid != running) {
+                p.timeline.push_back('W');
+            }
+        }
+
+        ++time;
+    }
+
+    printTimeline(processes);
+}
+
+// Priority (Preemptive)
+void simulatePriority(vector<Process> processes) {
+    cout << "=== Priority Scheduling (Preemptive) ===\n";
+    int time = 0;
+    int running = -1;
+
+    while (!allDone(processes)) {
+        // Handle IO
+        for (auto& p : processes) {
+            if (p.inIO) {
+                p.proceedBurst();
+                p.timeline.push_back('R');
+                if (p.burstDone()) {
+                    p.inIO = false;
+                    p.advanceBurst();
+                }
+            }
+        }
+
+        // Get eligible processes
+        vector<Process*> ready;
+        for (auto& p : processes) {
+            if (!p.inIO && !p.isDone && p.arrival <= time && p.hasMoreBursts() && p.bursts[p.burstIndex].isCPU) {
+                ready.push_back(&p);
+            }
+        }
+
+        // Preemptive: choose highest priority (lowest value)
+        if (!ready.empty()) {
+            sort(ready.begin(), ready.end(), [](Process* a, Process* b) {
+                return a->priority < b->priority;
+            });
+
+            running = ready[0]->pid;
+        } else {
+            running = -1;
+        }
+
+        for (auto& p : processes) {
+            if (p.pid == running && !p.inIO && !p.isDone) {
+                p.proceedBurst();
+                p.timeline.push_back('C');
+                if (p.burstDone()) {
+                    p.inCPU = false;
+                    p.advanceBurst();
+                }
+            } else if (!p.inIO && !p.isDone) {
+                p.timeline.push_back('W');
+            }
+        }
+
+        ++time;
+    }
+
+    printTimeline(processes);
+}
+
+// SJF (Preemptive)
+void simulateSJF(vector<Process> processes) {
+    cout << "=== Shortest Job First (Preemptive) ===\n";
+    int time = 0;
+    int running = -1;
+
+    while (!allDone(processes)) {
+        // Handle IO
+        for (auto& p : processes) {
+            if (p.inIO) {
+                p.proceedBurst();
+                p.timeline.push_back('R');
+                if (p.burstDone()) {
+                    p.inIO = false;
+                    p.advanceBurst();
+                }
+            }
+        }
+
+        vector<Process*> ready;
+        for (auto& p : processes) {
+            if (!p.inIO && !p.isDone && p.arrival <= time && p.hasMoreBursts() && p.bursts[p.burstIndex].isCPU) {
+                ready.push_back(&p);
+            }
+        }
+
+        if (!ready.empty()) {
+            sort(ready.begin(), ready.end(), [](Process* a, Process* b) {
+                return a->remaining < b->remaining;
+            });
+            running = ready[0]->pid;
+        } else {
+            running = -1;
+        }
+
+        for (auto& p : processes) {
+            if (p.pid == running && !p.inIO && !p.isDone) {
+                p.proceedBurst();
+                p.timeline.push_back('C');
+                if (p.burstDone()) {
+                    p.inCPU = false;
+                    p.advanceBurst();
+                }
+            } else if (!p.inIO && !p.isDone) {
+                p.timeline.push_back('W');
+            }
+        }
+
+        ++time;
+    }
+
+    printTimeline(processes);
+}
+
+int main() {
+    int quantum;
+    string filename = "proc.dat";
+    vector<Process> processes = readProcessFile(filename, quantum);
+
+    simulateFCFS(processes);
+    simulateSJF(processes);
+    simulatePriority(processes);
+    simulateRR(processes, quantum);
+
+    return 0;
+}
