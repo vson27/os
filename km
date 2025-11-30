@@ -1,0 +1,54 @@
+Code
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("You");
+MODULE_DESCRIPTION("Simple Hello World LKM");
+MODULE_VERSION("0.1");
+
+static int __init hello_init(void)
+{
+    printk(KERN_INFO "hello_lkm: Hello, kernel world!\n");
+    return 0;
+}
+
+static void __exit hello_exit(void)
+{
+    printk(KERN_INFO "hello_lkm: Goodbye, kernel world!\n");
+}
+
+module_init(hello_init);
+module_exit(hello_exit);
+
+Makefile.txt
+obj-m := hello.o
+KDIR := /lib/modules/$(shell uname -r)/build
+PWD := $(shell pwd)
+all:
+	$(MAKE) -C $(KDIR) M=$(PWD) modules
+clean:
+	$(MAKE) -C $(KDIR) M=$(PWD) clean
+
+bash:
+make
+
+sudo insmod hello.ko
+
+dmesg | tail -n 20
+
+You should see hello_lkm: Hello, kernel world!.
+lsmod | grep hello
+
+modinfo hello.ko
+
+sudo rmmod hello
+dmesg | tail -n 20
+
+You should see hello_lkm: Goodbye, kernel world!.
+
+
+
+
+
