@@ -1,0 +1,90 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+#include <pwd.h>
+#include <grp.h>
+#include <time.h>
+
+
+void print_permissions(mode_t mode) {
+    printf( (S_ISDIR(mode)) ? "d" : "-");
+    printf( (mode & S_IRUSR) ? "r" : "-");
+    printf( (mode & S_IWUSR) ? "w" : "-");
+    printf( (mode & S_IXUSR) ? "x" : "-");
+    printf( (mode & S_IRGRP) ? "r" : "-");
+    printf( (mode & S_IWGRP) ? "w" : "-");
+    printf( (mode & S_IXGRP) ? "x" : "-");
+    printf( (mode & S_IROTH) ? "r" : "-");
+    printf( (mode & S_IWOTH) ? "w" : "-");
+    printf( (mode & S_IXOTH) ? "x" : "-");
+}
+
+
+void search_directory(const char *dirpath, const char *target) {
+    DIR *dir;
+    struct dirent *entry;
+
+
+    if (!(dir = opendir(dirpath)))
+        return;
+
+
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0)
+            continue;
+
+
+        char path[1024];
+        snprintf(path, sizeof(path), "%s/%s", dirpath, entry->d_name);
+
+
+        struct stat info;
+        if (stat(path, &info) == 0) {
+            // If match found
+            if (strcmp(entry->d_name, target) == 0) {
+                printf("Found: %s\n", path);
+                printf("Type: %s\n", S_ISDIR(info.st_mode) ? "Directory" : "File");
+                printf("Permissions: ");
+                print_permissions(info.st_mode);
+                printf("\n");
+
+
+                printf("Owner: %s\n", getpwuid(info.st_uid)->pw_name);
+                printf("Group: %s\n", getgrgid(info.st_gid)->gr_name);
+                printf("Size: %ld bytes\n", info.st_size);
+                printf("Last Access: %s", ctime(&info.st_atime));
+                printf("Last Modification: %s", ctime(&info.st_mtime));
+                printf("Last Status Change: %s\n", ctime(&info.st_ctime));
+                printf("-------------------------------------------------\n");
+            }
+
+
+            // Recurse into subdirectories
+            if (S_ISDIR(info.st_mode)) {
+                search_directory(path, target);
+            }
+        }
+    }
+    closedir(dir);
+}
+
+
+int main(int argc, char *argv[]) {
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <filename> [start_directory]\n", argv[0]);
+        return 1;
+    }
+
+
+    const char *target = argv[1];
+    const char *startdir = (argc >= 3) ? argv[2] : ".";
+
+
+    search_directory(startdir, target);
+
+
+    return 0;
+}
