@@ -1,0 +1,188 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+struct Request {
+    int time;      // request arrival time
+    int size;      // requested size
+    int duration;  // lifetime
+};
+
+struct Allocation {
+    int start;      // start address
+    int requested;  // requested size
+    int allocated;  // actual allocated size (rounded)
+    int endTime;    // free time
+};
+
+struct Hole {
+    int start, size;
+};
+
+class Simulator {
+    int memSize;
+    vector<Request> requests;
+    vector<Allocation> allocations;
+    vector<Hole> holes;
+    int nextFitIndex;
+
+public:
+    Simulator(int size, vector<Request> reqs) {
+        memSize = size;
+        requests = reqs;
+        reset();
+    }
+
+    void reset() {
+        allocations.clear();
+        holes.clear();
+        holes.push_back({0, memSize});
+        nextFitIndex = 0;
+    }
+
+    void freeExpired(int currentTime) {
+        vector<Allocation> still;
+        for (auto &a : allocations) {
+            if (a.endTime <= currentTime) {
+                holes.push_back({a.start, a.allocated});
+            } else still.push_back(a);
+        }
+        allocations = still;
+        mergeHoles();
+    }
+
+    void mergeHoles() {
+        sort(holes.begin(), holes.end(), [](auto &a, auto &b){ return a.start < b.start; });
+        vector<Hole> merged;
+        for (auto &h : holes) {
+            if (merged.empty() || merged.back().start + merged.back().size < h.start) {
+                merged.push_back(h);
+            } else {
+                merged.back().size += h.size;
+            }
+        }
+        holes = merged;
+    }
+
+    bool allocate(Request req, string strategy, int currentTime) {
+        freeExpired(currentTime);
+        int needed = ((req.size + 9) / 10) * 10; // round to nearest 10KB
+
+        int idx = -1;
+        if (strategy == "First Fit") {
+            for (int i = 0; i < (int)holes.size(); i++) {
+                if (holes[i].size >= needed) { idx = i; break; }
+            }
+        }
+        else if (strategy == "Best Fit") {
+            int best = INT_MAX;
+            for (int i = 0; i < (int)holes.size(); i++) {
+                if (holes[i].size >= needed && holes[i].size < best) {
+                    best = holes[i].size; idx = i;
+                }
+            }
+        }
+        else if (strategy == "Worst Fit") {
+            int worst = -1;
+            for (int i = 0; i < (int)holes.size(); i++) {
+                if (holes[i].size >= needed && holes[i].size > worst) {
+                    worst = holes[i].size; idx = i;
+                }
+            }
+        }
+        else if (strategy == "Next Fit") {
+            int n = holes.size();
+            for (int i = 0; i < n; i++) {
+                int j = (nextFitIndex + i) % n;
+                if (holes[j].size >= needed) {
+                    idx = j; nextFitIndex = j; break;
+                }
+            }
+        }
+
+        if (idx == -1) return false;
+
+        Allocation alloc;
+        alloc.start = holes[idx].start;
+        alloc.requested = req.size;
+        alloc.allocated = needed;
+        alloc.endTime = currentTime + req.duration;
+        allocations.push_back(alloc);
+
+        holes[idx].start += needed;
+        holes[idx].size -= needed;
+        if (holes[idx].size == 0) holes.erase(holes.begin() + idx);
+
+        return true;
+    }
+
+    void run(string strategy) {
+        reset();
+        cout << "\n=== " << strategy << " ===\n";
+        int success = 0, total = 0;
+
+        for (auto &req : requests) {
+            if (req.time == -1) break;
+            total++;
+            if (allocate(req, strategy, req.time)) success++;
+
+            if (total % 10 == 0) {
+                double succRate = (success * 100.0) / total;
+
+                // Internal fragmentation
+                int totalReq = 0, totalAlloc = 0;
+                for (auto &a : allocations) {
+                    totalReq += a.requested;
+                    totalAlloc += a.allocated;
+                }
+                int wasted = totalAlloc - totalReq;
+                double internalPct = 0.0;
+                if (totalAlloc > 0) {
+                    internalPct = (wasted * 100.0) / totalAlloc;
+                }
+
+                // External fragmentation
+                int totalFree = 0;
+                for (auto &h : holes) totalFree += h.size;
+                int largest = 0;
+                for (auto &h : holes) largest = max(largest, h.size);
+
+                int externalKB = (totalFree > 0 ? totalFree - largest : 0);
+                double externalPct = (externalKB * 100.0) / memSize;
+
+                // Print results
+                cout << "After " << total << " requests:\n";
+                cout << "Success rate: " << fixed << setprecision(2) << succRate << "%\n";
+                cout << "Internal fragmentation: " << wasted << " KB ("
+                     << fixed << setprecision(2) << internalPct << "% of allocated)\n";
+                cout << "External fragmentation: " << externalKB << " KB ("
+                     << fixed << setprecision(2) << externalPct << "% of memory)\n\n";
+            }
+        }
+    }
+};
+
+int main() {
+    ifstream in("alloc.dat");
+    if (!in) {
+        cerr << "Error: alloc.dat not found\n";
+        return 1;
+    }
+
+    int memSize;
+    in >> memSize;
+    vector<Request> reqs;
+    while (true) {
+        Request r;
+        in >> r.time >> r.size >> r.duration;
+        if (r.time == -1) break;
+        reqs.push_back(r);
+    }
+
+    Simulator sim(memSize, reqs);
+    sim.run("First Fit");
+    sim.run("Best Fit");
+    sim.run("Worst Fit");
+    sim.run("Next Fit");
+
+    return 0;
+}
