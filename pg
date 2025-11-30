@@ -1,0 +1,219 @@
+#include <bits/stdc++.h>
+using namespace std;
+
+struct PageTableEntry {
+    int frame;
+    bool present;
+};
+
+// Single-level paging simulation
+void singleLevelPaging() {
+    int vm_size, pm_size, page_size;
+
+    cout << "=== Single-level Paging Simulator ===\n\n";
+
+    cout << "Enter Virtual Memory size (bytes): ";
+    cin >> vm_size;
+
+    cout << "Enter Physical Memory size (bytes): ";
+    cin >> pm_size;
+
+    cout << "Enter Page size (bytes): ";
+    cin >> page_size;
+
+    int num_pages = (vm_size + page_size - 1) / page_size;
+    int num_frames = (pm_size + page_size - 1) / page_size;
+
+    cout << "\nNumber of virtual pages: " << num_pages << endl;
+    cout << "Number of physical frames: " << num_frames << endl;
+
+    vector<PageTableEntry> pageTable(num_pages, {-1, false});
+    vector<int> frameTable(num_frames, -1);
+
+    cout << "\nEnter frame number for each page (-1 if not present):\n";
+    for (int i = 0; i < num_pages; ++i) {
+        cout << "  Page " << i << ": Frame -> ";
+        int f; cin >> f;
+        if (f >= 0 && f < num_frames) {
+            pageTable[i] = {f, true};
+            frameTable[f] = i;
+        } else if (f != -1) {
+            cout << "    Invalid frame number! Marked as not present.\n";
+        }
+    }
+
+    cout << "\nPage Table:\n";
+    cout << "Page | Frame | Present\n";
+    cout << "------------------------\n";
+    for (int i = 0; i < num_pages; ++i) {
+        cout << setw(5) << i << " | "
+             << setw(5) << pageTable[i].frame << " | "
+             << (pageTable[i].present ? "Yes" : "No") << endl;
+    }
+
+    cout << "\nFrame Table:\n";
+    cout << " Frame | Page\n";
+    cout << "--------------\n";
+    for (int f = 0; f < num_frames; ++f) {
+        cout << setw(6) << f << " | "
+             << setw(4) << (frameTable[f] == -1 ? -1 : frameTable[f]) << endl;
+    }
+
+    cout << "\nEnter Base address: ";
+    int base_addr; cin >> base_addr;
+    cout << "Enter Logical address to translate: ";
+    int logical_addr;
+    cin >> logical_addr;
+
+    int effective_logical = base_addr + logical_addr;
+
+    if (effective_logical < 0 || effective_logical >= vm_size) {
+        cout << "\nError: Effective logical address out of range.\n";
+        return;
+    }
+
+    int page_num = effective_logical / page_size;
+    int offset = effective_logical % page_size;
+
+    cout << "\nEffective Logical Address " << effective_logical
+         << " => Page " << page_num
+         << ", Offset " << offset << endl;
+
+    if (pageTable[page_num].present) {
+        int frame = pageTable[page_num].frame;
+        int physical_addr = frame * page_size + offset;
+        cout << "Physical Address = " << physical_addr << endl;
+    } else {
+        cout << "Page Fault! Page not present in physical memory.\n";
+    }
+}
+
+// Two-level paging simulation
+void twoLevelPaging() {
+    int vm_size, pm_size, page_size, dir_size;
+
+    cout << "=== Two-level Paging Simulator ===\n\n";
+
+    cout << "Enter Virtual Memory size (bytes): ";
+    cin >> vm_size;
+
+    cout << "Enter Physical Memory size (bytes): ";
+    cin >> pm_size;
+
+    cout << "Enter Page size (bytes): ";
+    cin >> page_size;
+
+    cout << "Enter Directory size (number of entries): ";
+    cin >> dir_size;
+
+    int num_pages = (vm_size + page_size - 1) / page_size;
+    int num_frames = (pm_size + page_size - 1) / page_size;
+
+    cout << "\nNumber of virtual pages: " << num_pages << endl;
+    cout << "Number of physical frames: " << num_frames << endl;
+
+    int pages_per_dir = num_pages / dir_size;
+    if (num_pages % dir_size != 0) pages_per_dir++;
+
+    cout << "Pages per directory entry (page table size): " << pages_per_dir << endl;
+
+    vector<vector<PageTableEntry>> directory(dir_size, vector<PageTableEntry>(pages_per_dir, {-1, false}));
+    vector<int> frameTable(num_frames, -1);
+
+    cout << "\nEnter frame number for each page (specify PDI and PTI):\n";
+    for (int d = 0; d < dir_size; ++d) {
+        cout << "  Directory entry " << d << " (Pages count: " << pages_per_dir << ")\n";
+        for (int p = 0; p < pages_per_dir; ++p) {
+            int virt_page_num = d * pages_per_dir + p;
+            if (virt_page_num >= num_pages) break; // avoid extra pages beyond total pages
+
+            cout << "    Page Table Index " << p << ": Frame -> ";
+            int f; cin >> f;
+            if (f >= 0 && f < num_frames) {
+                directory[d][p] = {f, true};
+                frameTable[f] = virt_page_num;
+            } else if (f != -1) {
+                cout << "      Invalid frame number! Marked as not present.\n";
+            }
+        }
+    }
+
+    cout << "\nEnter logical address to translate: ";
+    int logical_addr;
+    cin >> logical_addr;
+
+    if (logical_addr < 0 || logical_addr >= vm_size) {
+        cout << "\nError: Logical address out of range.\n";
+        return;
+    }
+
+    // Calculate bits needed for offset
+    int offset_bits = 0;
+    int temp = page_size;
+    while (temp > 1) {
+        offset_bits++;
+        temp >>= 1;
+    }
+
+    // Calculate bits for PDI and PTI
+    int pdi_bits = 0;
+    temp = dir_size;
+    while ((1 << pdi_bits) < dir_size) pdi_bits++;
+
+    int pti_bits = 0;
+    temp = pages_per_dir;
+    while ((1 << pti_bits) < pages_per_dir) pti_bits++;
+
+    // Extract PDI, PTI, Offset from logical address
+    int offset = logical_addr & ((1 << offset_bits) - 1);
+    int pti = (logical_addr >> offset_bits) & ((1 << pti_bits) - 1);
+    int pdi = (logical_addr >> (offset_bits + pti_bits)) & ((1 << pdi_bits) - 1);
+
+    cout << "\nLogical Address " << logical_addr
+         << " split into -> PDI: " << pdi
+         << ", PTI: " << pti
+         << ", Offset: " << offset << endl;
+
+    if (pdi >= dir_size || pti >= (int)directory[pdi].size()) {
+        cout << "Page Fault! Invalid directory or page table index.\n";
+        return;
+    }
+
+    if (directory[pdi][pti].present) {
+        int frame = directory[pdi][pti].frame;
+        int physical_addr = frame * page_size + offset;
+        cout << "Physical Address = " << physical_addr << endl;
+    } else {
+        cout << "Page Fault! Page not present in physical memory.\n";
+    }
+}
+
+int main() {
+    int choice;
+    cout << "Paging Simulator (C++) — Single-level and Two-level Paging\n\n";
+
+    do {
+        cout << "\nMenu:\n";
+        cout << " 1) Single-level Paging\n";
+        cout << " 2) Two-level Paging\n";
+        cout << " 3) Exit\n";
+        cout << "Enter choice: ";
+        cin >> choice;
+
+        switch (choice) {
+            case 1:
+                singleLevelPaging();
+                break;
+            case 2:
+                twoLevelPaging();
+                break;
+            case 3:
+                cout << "\nExiting. Goodbye!\n";
+                break;
+            default:
+                cout << "\nInvalid choice! Please enter 1, 2 or 3.\n";
+        }
+    } while (choice != 3);
+
+    return 0;
+}
