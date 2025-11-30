@@ -1,0 +1,223 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+
+#define MAXQ 10
+#define MAXP 100
+#define MAXBURST 50
+
+
+typedef struct {
+    char pid[10];
+    int arrival;
+    int priority;
+    int bursts[MAXBURST];
+    int burst_count;
+    int total_cpu;
+    int remaining;
+    int first_response;
+    int completion;
+    int cpu_since_demotion;
+    int wait_since_promotion;
+} Process;
+
+
+typedef struct Node {
+    Process *proc;
+    struct Node *next;
+} Node;
+
+
+typedef struct {
+    Node *front, *rear;
+} Queue;
+
+
+void initQueue(Queue *q) {
+    q->front = q->rear = NULL;
+}
+
+
+int isEmpty(Queue *q) {
+    return q->front == NULL;
+}
+
+
+void enqueue(Queue *q, Process *p) {
+    Node *n = (Node*)malloc(sizeof(Node));
+    n->proc = p;
+    n->next = NULL;
+    if (q->rear) q->rear->next = n;
+    q->rear = n;
+    if (!q->front) q->front = n;
+}
+
+
+Process* dequeue(Queue *q) {
+    if (!q->front) return NULL;
+    Node *n = q->front;
+    Process *p = n->proc;
+    q->front = n->next;
+    if (!q->front) q->rear = NULL;
+    free(n);
+    return p;
+}
+
+
+int main() {
+    FILE *fp = fopen("MLFQ.dat", "r");
+    if (!fp) { perror("MLFQ.dat"); return 1; }
+
+
+    int Q; fscanf(fp, "%d", &Q);
+    int quanta[MAXQ];
+    for (int i = 0; i < Q; i++) fscanf(fp, "%d", &quanta[i]);
+    int T1, T2; fscanf(fp, "%d %d", &T1, &T2);
+
+
+    Process procs[MAXP];
+    int n = 0;
+    while (!feof(fp)) {
+        char line[256];
+        if (!fgets(line, sizeof(line), fp)) break;
+        if (strlen(line) < 2) continue;
+        char pid[10]; int arr, pri;
+        char tmp;
+        int bursts[MAXBURST]; int bcount = 0;
+        char *token = strtok(line, " ");
+        strcpy(pid, token);
+        arr = atoi(strtok(NULL, " "));
+        pri = atoi(strtok(NULL, " "));
+        strtok(NULL, " "); // skip P
+        token = strtok(NULL, " ");
+        while (token) {
+            bursts[bcount++] = atoi(token);
+            token = strtok(NULL, " ");
+        }
+        Process *p = &procs[n++];
+        strcpy(p->pid, pid);
+        p->arrival = arr;
+        p->priority = pri;
+        p->burst_count = bcount;
+        p->total_cpu = 0;
+        for (int i = 0; i < bcount; i+=2) p->total_cpu += bursts[i];
+        p->remaining = p->total_cpu;
+        memcpy(p->bursts, bursts, sizeof(int)*bcount);
+        p->first_response = -1;
+        p->completion = 0;
+        p->cpu_since_demotion = 0;
+        p->wait_since_promotion = 0;
+    }
+    fclose(fp);
+
+
+    Queue ready[MAXQ];
+    for (int i = 0; i < Q; i++) initQueue(&ready[i]);
+
+
+    int completed = 0;
+    int time = 0;
+
+
+    // sort arrivals
+    int arrived[MAXP] = {0};
+
+
+    while (completed < n) {
+        // admit arrivals
+        for (int i = 0; i < n; i++) {
+            if (!arrived[i] && procs[i].arrival <= time) {
+                enqueue(&ready[procs[i].priority], &procs[i]);
+                arrived[i] = 1;
+            }
+        }
+
+
+        Process *cur = NULL;
+        int qid;
+        for (qid = 0; qid < Q; qid++) {
+            if (!isEmpty(&ready[qid])) {
+                cur = dequeue(&ready[qid]);
+                break;
+            }
+        }
+
+
+        if (!cur) { time++; continue; }
+
+
+        if (cur->first_response == -1) cur->first_response = time;
+
+
+        int run_time = quanta[cur->priority];
+        if (cur->remaining < run_time) run_time = cur->remaining;
+
+
+        cur->remaining -= run_time;
+        time += run_time;
+        cur->cpu_since_demotion += run_time;
+
+
+        // arrivals during run
+        for (int i = 0; i < n; i++) {
+            if (!arrived[i] && procs[i].arrival <= time) {
+                enqueue(&ready[procs[i].priority], &procs[i]);
+                arrived[i] = 1;
+            }
+        }
+
+
+        if (cur->remaining == 0) {
+            cur->completion = time;
+            completed++;
+        } else {
+            if (cur->cpu_since_demotion >= T1 && cur->priority < Q-1) {
+                cur->priority++;
+                cur->cpu_since_demotion = 0;
+            }
+            enqueue(&ready[cur->priority], cur);
+        }
+
+
+        // waiting processes promotion
+        for (int q = 0; q < Q; q++) {
+            Node *prev = NULL, *node = ready[q].front;
+            while (node) {
+                Process *p = node->proc;
+                if (p != cur) {
+                    p->wait_since_promotion += run_time;
+                    if (p->wait_since_promotion >= T2 && p->priority > 0) {
+                        // remove from current
+                        if (prev) prev->next = node->next;
+                        else ready[q].front = node->next;
+                        if (!node->next) ready[q].rear = prev;
+
+
+                        p->priority--;
+                        p->wait_since_promotion = 0;
+                        enqueue(&ready[p->priority], p);
+                        Node *tmp = node;
+                        node = node->next;
+                        free(tmp);
+                        continue;
+                    }
+                }
+                prev = node;
+                node = node->next;
+            }
+        }
+    }
+
+
+    double total_tat=0,total_wt=0,total_rt=0;
+    for (int i=0;i<n;i++){
+        int tat = procs[i].completion - procs[i].arrival;
+        int wt = tat - procs[i].total_cpu;
+        int rt = procs[i].first_response - procs[i].arrival;
+        total_tat+=tat; total_wt+=wt; total_rt+=rt;
+        printf("Process %s: TAT=%d, WT=%d, RT=%d\n",procs[i].pid,tat,wt,rt);
+    }
+    printf("Average TAT=%.2f, WT=%.2f, RT=%.2f\n", total_tat/n, total_wt/n, total_rt/n);
+    return 0;
+}
