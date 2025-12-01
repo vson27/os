@@ -1,0 +1,102 @@
+#include <iostream>
+#include <pthread.h>
+#include <semaphore.h>
+#include <queue>
+#include <unistd.h>
+#include <vector>
+using namespace std;
+
+queue<string> bufferQ;
+sem_t emptySlots, fullSlots;
+pthread_mutex_t mutexBuffer;
+
+int bufferSize, numProducers, numConsumers;
+const int LIMIT = 15;
+int producedCount = 0, consumedCount = 0;
+
+void* producer(void* arg) {
+    int id = *(int*)arg;
+    int item = 0;
+    while (true) {
+        pthread_mutex_lock(&mutexBuffer);
+        if (producedCount >= LIMIT) {
+            pthread_mutex_unlock(&mutexBuffer);
+            break;
+        }
+        producedCount++;
+        pthread_mutex_unlock(&mutexBuffer);
+
+        sem_wait(&emptySlots);
+        pthread_mutex_lock(&mutexBuffer);
+
+        string prodItem = "P" + to_string(id) + "." + to_string(item);
+        bufferQ.push(prodItem);
+        cout << "Producer " << id << " produced: " << prodItem << endl;
+        item++;
+
+        pthread_mutex_unlock(&mutexBuffer);
+        sem_post(&fullSlots);
+        sleep(1);
+    }
+    return nullptr;
+}
+
+void* consumer(void* arg) {
+    int id = *(int*)arg;
+    while (true) {
+        pthread_mutex_lock(&mutexBuffer);
+        if (consumedCount >= LIMIT) {
+            pthread_mutex_unlock(&mutexBuffer);
+            break;
+        }
+        pthread_mutex_unlock(&mutexBuffer);
+
+        sem_wait(&fullSlots);
+        pthread_mutex_lock(&mutexBuffer);
+
+        if (!bufferQ.empty()) {
+            string item = bufferQ.front();
+            bufferQ.pop();
+            consumedCount++;
+            cout << "Consumer " << id << " consumed: " << item << endl;
+        }
+
+        pthread_mutex_unlock(&mutexBuffer);
+        sem_post(&emptySlots);
+        sleep(2);
+    }
+    return nullptr;
+}
+
+int main(int argc, char* argv[]) {
+    if (argc != 4) {
+        cerr << "Usage: " << argv[0] << " <buffer_size> <num_producers> <num_consumers>\n";
+        return 1;
+    }
+
+    bufferSize = atoi(argv[1]);
+    numProducers = atoi(argv[2]);
+    numConsumers = atoi(argv[3]);
+
+    sem_init(&emptySlots, 0, bufferSize);
+    sem_init(&fullSlots, 0, 0);
+    pthread_mutex_init(&mutexBuffer, nullptr);
+
+    vector<pthread_t> prodThreads(numProducers), consThreads(numConsumers);
+    vector<int> prodIds(numProducers), consIds(numConsumers);
+
+    for (int i = 0; i < numProducers; i++) {
+        prodIds[i] = i+1;
+        pthread_create(&prodThreads[i], nullptr, producer, &prodIds[i]);
+    }
+    for (int i = 0; i < numConsumers; i++) {
+        consIds[i] = i+1;
+        pthread_create(&consThreads[i], nullptr, consumer, &consIds[i]);
+    }
+
+    for (int i = 0; i < numProducers; i++) pthread_join(prodThreads[i], nullptr);
+    for (int i = 0; i < numConsumers; i++) pthread_join(consThreads[i], nullptr);
+
+    cout << "Done. Produced and consumed " << LIMIT << " items.\n";
+    return 0;
+}
