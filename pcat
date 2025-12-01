@@ -1,0 +1,79 @@
+// fork_atomic_spmc.cpp
+#include <iostream>
+#include <atomic>
+#include <unistd.h>
+#include <sys/mman.h>
+#include <sys/wait.h>
+using namespace std;
+
+#define BUFFER_SIZE 5
+
+struct SharedBuffer {
+    int data[BUFFER_SIZE];
+    int in, out, count;
+    atomic_flag lock = ATOMIC_FLAG_INIT;
+};
+
+void lock(atomic_flag *l) {
+    while (l->test_and_set(memory_order_acquire))
+        ; // spin
+}
+void unlock(atomic_flag *l) {
+    l->clear(memory_order_release);
+}
+
+int main() {
+    // Shared memory between processes
+    auto *buffer = (SharedBuffer *)mmap(nullptr, sizeof(SharedBuffer),
+        PROT_READ | PROT_WRITE, MAP_SHARED | MAP_ANONYMOUS, -1, 0);
+    buffer->in = buffer->out = buffer->count = 0;
+
+    pid_t pid1 = fork();
+    if (pid1 == 0) { // Child 1 - Consumer
+        while (true) {
+            lock(&buffer->lock);
+            if (buffer->count > 0) {
+                int item = buffer->data[buffer->out];
+                buffer->out = (buffer->out + 1) % BUFFER_SIZE;
+                buffer->count--;
+                cout << "Consumer 1 consumed: " << item << endl;
+            }
+            unlock(&buffer->lock);
+            usleep(200000);
+        }
+        _exit(0);
+    }
+
+    pid_t pid2 = fork();
+    if (pid2 == 0) { // Child 2 - Consumer
+        while (true) {
+            lock(&buffer->lock);
+            if (buffer->count > 0) {
+                int item = buffer->data[buffer->out];
+                buffer->out = (buffer->out + 1) % BUFFER_SIZE;
+                buffer->count--;
+                cout << "Consumer 2 consumed: " << item << endl;
+            }
+            unlock(&buffer->lock);
+            usleep(300000);
+        }
+        _exit(0);
+    }
+
+    // Parent - Producer
+    int item = 0;
+    while (true) {
+        lock(&buffer->lock);
+        if (buffer->count < BUFFER_SIZE) {
+            buffer->data[buffer->in] = ++item;
+            buffer->in = (buffer->in + 1) % BUFFER_SIZE;
+            buffer->count++;
+            cout << "Producer produced: " << item << endl;
+        }
+        unlock(&buffer->lock);
+        usleep(150000);
+    }
+
+    munmap(buffer, sizeof(SharedBuffer));
+    return 0;
+}
